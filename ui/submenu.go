@@ -19,10 +19,13 @@ type SubmenuItem interface {
 	// If applicable, "un-toggles" the item.
 	clearActiveFlag()
 	// Renders the item. isSelected will always be false if isSelectable() returns false.
-	render(isSelected bool, isSubmenuOpen bool, isFocused bool) string
+	render(isSelected bool, isSubmenuOpen bool, isFocused bool, width int) string
 }
 
-const submenuItemWidth = 45
+const (
+	defaultSubmenuItemWidth = 45
+	minSubmenuItemWidth     = 24
+)
 
 // Visual variant of a submenu item:
 //
@@ -78,7 +81,7 @@ func (item *LabeledSubmenuItem) childSubmenu() *Submenu {
 	return item.ChildSubmenu
 }
 
-func (item *LabeledSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
+func (item *LabeledSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool, width int) string {
 	colorStyle := lipgloss.NewStyle()
 
 	if isSubmenuOpen {
@@ -118,7 +121,7 @@ func (item *LabeledSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFo
 	outerStyle := colorStyle.
 		PaddingRight(1).
 		PaddingLeft(2).
-		Width(submenuItemWidth)
+		Width(width)
 
 	return outerStyle.Render(
 		RenderSplit(
@@ -126,7 +129,7 @@ func (item *LabeledSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFo
 			colorStyle.
 				Faint(true).
 				Render(item.AdditionalLabel),
-			submenuItemWidth-outerStyle.GetHorizontalPadding(),
+			width-outerStyle.GetHorizontalPadding(),
 			colorStyle,
 		),
 	)
@@ -151,7 +154,7 @@ func (item *ToggleableSubmenuItem) clearActiveFlag() {
 	item.IsActive = false
 }
 
-func (item *ToggleableSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
+func (item *ToggleableSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool, width int) string {
 	colorStyle := lipgloss.NewStyle()
 
 	if isSubmenuOpen {
@@ -199,7 +202,7 @@ func (item *ToggleableSubmenuItem) render(isSelected bool, isSubmenuOpen bool, i
 
 	outerStyle := colorStyle.
 		Padding(0, 1).
-		Width(submenuItemWidth)
+		Width(width)
 
 	return outerStyle.Render(
 		RenderSplit(
@@ -207,7 +210,7 @@ func (item *ToggleableSubmenuItem) render(isSelected bool, isSubmenuOpen bool, i
 			colorStyle.
 				Faint(true).
 				Render(item.AdditionalLabel),
-			submenuItemWidth-outerStyle.GetHorizontalPadding(),
+			width-outerStyle.GetHorizontalPadding(),
 			colorStyle,
 		),
 	)
@@ -272,13 +275,13 @@ func (item *SettingSubmenuItem) onActivate() tea.Cmd {
 
 func (item *SettingSubmenuItem) clearActiveFlag() {}
 
-func (item *SettingSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
+func (item *SettingSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool, width int) string {
 	selectedLabel := item.options[item.selected]
 
 	style := lipgloss.NewStyle().
 		PaddingRight(1).
 		PaddingLeft(2).
-		Width(submenuItemWidth)
+		Width(width)
 	selectedLabelStyle := lipgloss.NewStyle()
 
 	if isSubmenuOpen {
@@ -318,7 +321,7 @@ func (item *SettingSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFo
 		RenderSplit(
 			item.Label,
 			selectedLabelStyle.Render(selectedLabel),
-			submenuItemWidth-style.GetHorizontalPadding(),
+			width-style.GetHorizontalPadding(),
 			lipgloss.NewStyle(),
 		),
 	)
@@ -337,7 +340,7 @@ func (d *DividerSubmenuItem) onActivate() tea.Cmd {
 
 func (d *DividerSubmenuItem) clearActiveFlag() {}
 
-func (d *DividerSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
+func (d *DividerSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool, width int) string {
 	return lipgloss.NewStyle().
 		Faint(true).
 		Render("  --")
@@ -356,7 +359,7 @@ func (s *SpacerSubmenuItem) onActivate() tea.Cmd {
 
 func (s *SpacerSubmenuItem) clearActiveFlag() {}
 
-func (s *SpacerSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
+func (s *SpacerSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool, width int) string {
 	return ""
 }
 
@@ -376,11 +379,12 @@ func (i *TitleSubmenuItem) onActivate() tea.Cmd {
 
 func (i *TitleSubmenuItem) clearActiveFlag() {}
 
-func (i *TitleSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
+func (i *TitleSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool, width int) string {
 	return lipgloss.NewStyle().
 		Faint(true).
 		PaddingLeft(2).
-		Render(i.Label)
+		Width(width).
+		Render(truncateString(i.Label, width-2))
 }
 
 type SubmenuExclusivity int
@@ -413,12 +417,23 @@ type ComputedSubmenuItem struct {
 }
 
 // Render the submenu to a fixed-height string with scrolling.
-func (submenu *Submenu) Render(isSubmenuOpen bool, height int) string {
+func (submenu *Submenu) Render(isSubmenuOpen bool, height int, width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	itemWidth := min(defaultSubmenuItemWidth, width)
+	childWidth := 0
+	if submenu.selectedChildSubmenu() != nil {
+		childWidth = min(defaultSubmenuItemWidth, max(minSubmenuItemWidth, width/2))
+		itemWidth = max(minSubmenuItemWidth, width-childWidth)
+	}
+
 	// Render all of the computedItems to strings so we can work with their computed heights.
 	computedItems := make([]ComputedSubmenuItem, len(submenu.items))
 	isFocused := isSubmenuOpen && !submenu.childOpen
 	for i, item := range submenu.items {
-		text := item.render(i == submenu.cursor && item.isSelectable(), isSubmenuOpen, isFocused)
+		text := item.render(i == submenu.cursor && item.isSelectable(), isSubmenuOpen, isFocused, itemWidth)
 
 		computedItems[i] = ComputedSubmenuItem{
 			text:   text,
@@ -518,7 +533,7 @@ func (submenu *Submenu) Render(isSubmenuOpen bool, height int) string {
 	if child := submenu.selectedChildSubmenu(); isSubmenuOpen && child != nil {
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			rendered,
-			child.Render(isSubmenuOpen && submenu.childOpen, height))
+			child.Render(isSubmenuOpen && submenu.childOpen, height, childWidth))
 	}
 
 	return rendered
@@ -620,6 +635,10 @@ func (submenu *Submenu) CloseChildSubmenu() bool {
 
 	submenu.childOpen = false
 	return true
+}
+
+func (submenu *Submenu) HasOpenChildSubmenu() bool {
+	return submenu.childOpen && submenu.selectedChildSubmenu() != nil
 }
 
 // Ensure the cursor is within bounds and on a selectable item. Call after major updates to the items.
