@@ -122,17 +122,26 @@ func (item *LabeledSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFo
 		PaddingRight(1).
 		PaddingLeft(2).
 		Width(width)
+	innerWidth := width - outerStyle.GetHorizontalPadding()
+	rightLabel := colorStyle.
+		Faint(true).
+		Render(item.AdditionalLabel)
 
-	return outerStyle.Render(
-		RenderSplit(
-			colorStyle.Render(item.Label),
+	content := RenderSplit(
+		colorStyle.Render(item.Label),
+		rightLabel,
+		innerWidth,
+		colorStyle,
+	)
+	if item.AdditionalLabel != "" && lipgloss.Width(item.Label)+lipgloss.Width(item.AdditionalLabel)+1 > innerWidth {
+		content = colorStyle.Render(truncateString(item.Label, innerWidth)) + "\n" +
 			colorStyle.
 				Faint(true).
-				Render(item.AdditionalLabel),
-			width-outerStyle.GetHorizontalPadding(),
-			colorStyle,
-		),
-	)
+				Width(innerWidth).
+				Render(item.AdditionalLabel)
+	}
+
+	return outerStyle.Render(content)
 }
 
 // A menu item with a label that can be toggled active or inactive.
