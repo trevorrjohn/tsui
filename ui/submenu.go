@@ -19,7 +19,7 @@ type SubmenuItem interface {
 	// If applicable, "un-toggles" the item.
 	clearActiveFlag()
 	// Renders the item. isSelected will always be false if isSelectable() returns false.
-	render(isSelected bool, isSubmenuOpen bool) string
+	render(isSelected bool, isSubmenuOpen bool, isFocused bool) string
 }
 
 const submenuItemWidth = 45
@@ -52,6 +52,8 @@ type LabeledSubmenuItem struct {
 	Label string
 	// An extra label shown on the right side. Will be shown in a muted color.
 	AdditionalLabel string
+	// Optional submenu shown to the right when this item is selected.
+	ChildSubmenu *Submenu
 	// Visual variant.
 	Variant SubmenuItemVariant
 	// Callback when the item is activated.
@@ -72,11 +74,15 @@ func (item *LabeledSubmenuItem) clearActiveFlag() {
 	// No-op because this item is not toggleable.
 }
 
-func (item *LabeledSubmenuItem) render(isSelected bool, isSubmenuOpen bool) string {
+func (item *LabeledSubmenuItem) childSubmenu() *Submenu {
+	return item.ChildSubmenu
+}
+
+func (item *LabeledSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
 	colorStyle := lipgloss.NewStyle()
 
 	if isSubmenuOpen {
-		if isSelected {
+		if isSelected && isFocused {
 			if item.Variant == SubmenuItemVariantDanger {
 				colorStyle = colorStyle.
 					Background(Red).
@@ -86,6 +92,10 @@ func (item *LabeledSubmenuItem) render(isSelected bool, isSubmenuOpen bool) stri
 					Background(Secondary).
 					Foreground(Black)
 			}
+		} else if isSelected {
+			colorStyle = colorStyle.
+				Background(DarkGray).
+				Faint(true)
 		} else if item.IsDim {
 			colorStyle = colorStyle.
 				Faint(true)
@@ -141,7 +151,7 @@ func (item *ToggleableSubmenuItem) clearActiveFlag() {
 	item.IsActive = false
 }
 
-func (item *ToggleableSubmenuItem) render(isSelected bool, isSubmenuOpen bool) string {
+func (item *ToggleableSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
 	colorStyle := lipgloss.NewStyle()
 
 	if isSubmenuOpen {
@@ -155,10 +165,14 @@ func (item *ToggleableSubmenuItem) render(isSelected bool, isSubmenuOpen bool) s
 			}
 		}
 
-		if isSelected {
+		if isSelected && isFocused {
 			colorStyle = colorStyle.
 				Background(Secondary).
 				Foreground(Black)
+		} else if isSelected {
+			colorStyle = colorStyle.
+				Background(DarkGray).
+				Faint(true)
 		} else if item.IsDim {
 			colorStyle = colorStyle.
 				Faint(true)
@@ -258,7 +272,7 @@ func (item *SettingSubmenuItem) onActivate() tea.Cmd {
 
 func (item *SettingSubmenuItem) clearActiveFlag() {}
 
-func (item *SettingSubmenuItem) render(isSelected bool, isSubmenuOpen bool) string {
+func (item *SettingSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
 	selectedLabel := item.options[item.selected]
 
 	style := lipgloss.NewStyle().
@@ -268,13 +282,17 @@ func (item *SettingSubmenuItem) render(isSelected bool, isSubmenuOpen bool) stri
 	selectedLabelStyle := lipgloss.NewStyle()
 
 	if isSubmenuOpen {
-		if isSelected {
+		if isSelected && isFocused {
 			style = style.
 				Background(Secondary).
 				Foreground(Black)
 
 			selectedLabelStyle = selectedLabelStyle.
 				Bold(true)
+		} else if isSelected {
+			style = style.
+				Background(DarkGray).
+				Faint(true)
 		} else {
 			var color lipgloss.Color
 
@@ -319,7 +337,7 @@ func (d *DividerSubmenuItem) onActivate() tea.Cmd {
 
 func (d *DividerSubmenuItem) clearActiveFlag() {}
 
-func (d *DividerSubmenuItem) render(isSelected bool, isSubmenuOpen bool) string {
+func (d *DividerSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
 	return lipgloss.NewStyle().
 		Faint(true).
 		Render("  --")
@@ -338,7 +356,7 @@ func (s *SpacerSubmenuItem) onActivate() tea.Cmd {
 
 func (s *SpacerSubmenuItem) clearActiveFlag() {}
 
-func (s *SpacerSubmenuItem) render(isSelected bool, isSubmenuOpen bool) string {
+func (s *SpacerSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
 	return ""
 }
 
@@ -358,7 +376,7 @@ func (i *TitleSubmenuItem) onActivate() tea.Cmd {
 
 func (i *TitleSubmenuItem) clearActiveFlag() {}
 
-func (i *TitleSubmenuItem) render(isSelected bool, isSubmenuOpen bool) string {
+func (i *TitleSubmenuItem) render(isSelected bool, isSubmenuOpen bool, isFocused bool) string {
 	return lipgloss.NewStyle().
 		Faint(true).
 		PaddingLeft(2).
@@ -381,6 +399,11 @@ type Submenu struct {
 	Exclusivity SubmenuExclusivity
 	items       []SubmenuItem
 	cursor      int
+	childOpen   bool
+}
+
+type childSubmenuItem interface {
+	childSubmenu() *Submenu
 }
 
 // A rendered submenu item and its computed layout info.
@@ -393,8 +416,9 @@ type ComputedSubmenuItem struct {
 func (submenu *Submenu) Render(isSubmenuOpen bool, height int) string {
 	// Render all of the computedItems to strings so we can work with their computed heights.
 	computedItems := make([]ComputedSubmenuItem, len(submenu.items))
+	isFocused := isSubmenuOpen && !submenu.childOpen
 	for i, item := range submenu.items {
-		text := item.render(i == submenu.cursor && item.isSelectable(), isSubmenuOpen)
+		text := item.render(i == submenu.cursor && item.isSelectable(), isSubmenuOpen, isFocused)
 
 		computedItems[i] = ComputedSubmenuItem{
 			text:   text,
@@ -490,14 +514,42 @@ func (submenu *Submenu) Render(isSubmenuOpen bool, height int) string {
 		s.WriteString("\n" + overflow)
 	}
 
-	return s.String()
+	rendered := s.String()
+	if child := submenu.selectedChildSubmenu(); isSubmenuOpen && child != nil {
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			rendered,
+			child.Render(isSubmenuOpen && submenu.childOpen, height))
+	}
+
+	return rendered
+}
+
+func (submenu *Submenu) selectedChildSubmenu() *Submenu {
+	if submenu.cursor < 0 || submenu.cursor >= len(submenu.items) {
+		return nil
+	}
+
+	item, ok := submenu.items[submenu.cursor].(childSubmenuItem)
+	if !ok {
+		return nil
+	}
+
+	return item.childSubmenu()
 }
 
 // Move the cursor to the next selectable item.
 func (submenu *Submenu) CursorDown() {
+	if submenu.childOpen {
+		if child := submenu.selectedChildSubmenu(); child != nil {
+			child.CursorDown()
+			return
+		}
+	}
+
 	for i := submenu.cursor + 1; i < len(submenu.items); i++ {
 		if submenu.items[i].isSelectable() {
 			submenu.cursor = i
+			submenu.childOpen = false
 			return
 		}
 	}
@@ -505,9 +557,17 @@ func (submenu *Submenu) CursorDown() {
 
 // Move the cursor to the previous selectable item.
 func (submenu *Submenu) CursorUp() {
+	if submenu.childOpen {
+		if child := submenu.selectedChildSubmenu(); child != nil {
+			child.CursorUp()
+			return
+		}
+	}
+
 	for i := submenu.cursor - 1; i >= 0; i-- {
 		if submenu.items[i].isSelectable() {
 			submenu.cursor = i
+			submenu.childOpen = false
 			return
 		}
 	}
@@ -515,6 +575,7 @@ func (submenu *Submenu) CursorUp() {
 
 // Reset the cursor to the first selectable item.
 func (submenu *Submenu) ResetCursor() {
+	submenu.childOpen = false
 	for i, item := range submenu.items {
 		if item.isSelectable() {
 			submenu.cursor = i
@@ -525,8 +586,40 @@ func (submenu *Submenu) ResetCursor() {
 
 // Set the items list and ensure the cursor is within bounds and on a selectable item.
 func (submenu *Submenu) SetItems(items []SubmenuItem) {
+	childOpen := submenu.childOpen
+	childCursor := 0
+	if child := submenu.selectedChildSubmenu(); child != nil {
+		childCursor = child.cursor
+	}
+
 	submenu.items = items
 	submenu.fixCursor()
+	submenu.childOpen = childOpen && submenu.selectedChildSubmenu() != nil
+	if submenu.childOpen {
+		child := submenu.selectedChildSubmenu()
+		child.cursor = childCursor
+		child.fixCursor()
+	}
+}
+
+func (submenu *Submenu) OpenChildSubmenu() bool {
+	child := submenu.selectedChildSubmenu()
+	if child == nil {
+		return false
+	}
+
+	submenu.childOpen = true
+	child.ResetCursor()
+	return true
+}
+
+func (submenu *Submenu) CloseChildSubmenu() bool {
+	if !submenu.childOpen {
+		return false
+	}
+
+	submenu.childOpen = false
+	return true
 }
 
 // Ensure the cursor is within bounds and on a selectable item. Call after major updates to the items.
@@ -547,6 +640,12 @@ func (submenu *Submenu) fixCursor() {
 // Call the currently selected item's activate callback.
 // Returns a bubbletea command that can be run asynchronously.
 func (submenu *Submenu) Activate() tea.Cmd {
+	if submenu.childOpen {
+		if child := submenu.selectedChildSubmenu(); child != nil {
+			return child.Activate()
+		}
+	}
+
 	if submenu.cursor < 0 || submenu.cursor >= len(submenu.items) {
 		return nil
 	}

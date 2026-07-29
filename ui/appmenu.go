@@ -140,6 +140,24 @@ func (appmenu *Appmenu) Activate() tea.Cmd {
 	return nil
 }
 
+// Open the child submenu for the selected submenu item, if one exists.
+func (appmenu *Appmenu) OpenChildSubmenu() bool {
+	if !appmenu.isOpen || len(appmenu.items) == 0 {
+		return false
+	}
+
+	return appmenu.items[appmenu.cursor].Submenu.OpenChildSubmenu()
+}
+
+// Close the child submenu for the selected submenu item, if one is open.
+func (appmenu *Appmenu) CloseChildSubmenu() bool {
+	if !appmenu.isOpen || len(appmenu.items) == 0 {
+		return false
+	}
+
+	return appmenu.items[appmenu.cursor].Submenu.CloseChildSubmenu()
+}
+
 // Returns true if a submenu is currently open.
 func (appmenu *Appmenu) IsSubmenuOpen() bool {
 	return appmenu.isOpen
